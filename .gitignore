@@ -30,3 +30,12 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# orca runtime data
+.orca/
+
+# goreleaser output
+dist/
+
+# Claude Code orchestrator state (local only)
+.claude/
