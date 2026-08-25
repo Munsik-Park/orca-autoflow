@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/orca-cli/orca/internal/adapter"
+	"github.com/Munsik-Park/orca-autoflow/internal/adapter"
 )
 
 // mockAdapter is a minimal stub that satisfies the Adapter interface for tests.

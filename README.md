@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" alt="orca" width="240">
 
-# orca
+# orca-autoflow
 
 **The orchestration layer for AI coding agents**
 
@@ -14,7 +14,7 @@
 
 ---
 
-> **orca** `/ˈɔːr.kə/` — *biology*: an apex predator that hunts in coordinated pods. The only consistent natural enemy of the great white shark.
+> **orca-autoflow** `/ˈɔːr.kə/` — *biology*: an apex predator that hunts in coordinated pods. The only consistent natural enemy of the great white shark.
 
 Each agent loses its entire run context the moment the session compacts. Orca holds the state — isolated worktrees, structured run logs, a DAG the agents can read and drive — so nothing gets lost between resets.
 
@@ -47,12 +47,15 @@ brew install orca-cli/tap/orca
 Clone and install with a standard Go toolchain:
 
 ```sh
-git clone https://github.com/orca-cli/orca.git && cd orca && go install ./cmd/orca
+git clone git@github.com:Munsik-Park/orca-autoflow.git
+cd orca-autoflow
+go build -o ~/go/bin/orca-autoflow ./cmd/orca
 ```
 
 ### Binary download
 
-Pre-built binaries for Linux, macOS, and Windows are available at [https://github.com/orca-cli/orca/releases](https://github.com/orca-cli/orca/releases). Download the archive for the target platform, extract the `orca` binary, and place it on `PATH`.
+Pre-built binaries are not published for this fork yet. Build from source and
+place the `orca-autoflow` binary on `PATH`.
 
 Then point the agent's MCP config at `orca mcp serve` — see [Agent Setup](#agent-setup) below.
 
@@ -86,7 +89,7 @@ queued → running → ready → shipped
          blocked  failed → retry
 ```
 
-#### Twelve CLI Commands
+#### CLI Commands
 
 | Command | Purpose |
 |---|---|
@@ -102,8 +105,29 @@ queued → running → ready → shipped
 | `orca retry` | Relaunch a failed or killed run with feedback |
 | `orca config` | Manage AGENTS.md, skills, policies per repo |
 | `orca mcp serve` | Run Orca as an MCP server (stdio) |
+| `orca-autoflow autoflow step` | Run one artifact-gated AutoFlow phase through an adapter |
 
 The full CLI reference with flags is in [DOCS.md](DOCS.md).
+
+### AutoFlow Step
+
+The initial AutoFlow integration runs one phase at a time. It validates the
+phase's required `.autoflow/` input artifacts, invokes the target repo's
+`scripts/orca/codex-agent.sh`, validates required output artifacts, then writes
+Orca-owned state to `.autoflow/issue-<N>-orca.json`.
+
+```sh
+orca-autoflow autoflow step \
+  --target /path/to/project \
+  --issue 123 \
+  --phase red \
+  --adapter codex \
+  --prompt-file .autoflow/issue-123-red-prompt.md
+```
+
+When Codex is authenticated with a ChatGPT subscription, omit `--model` unless
+you have verified the model is supported by that account. Orca then lets Codex
+use its configured default model.
 
 ## Agent Setup
 
@@ -115,7 +139,7 @@ Add the following to `~/.claude/settings.json`. For a project-scoped setup, use 
 {
   "mcpServers": {
     "orca": {
-      "command": "orca",
+      "command": "orca-autoflow",
       "args": ["mcp", "serve"]
     }
   }
@@ -130,7 +154,7 @@ Add to `~/.config/opencode/opencode.json` for a global setup, or `opencode.json`
 {
   "mcpServers": {
     "orca": {
-      "command": "orca",
+      "command": "orca-autoflow",
       "args": ["mcp", "serve"]
     }
   }
@@ -145,7 +169,7 @@ Add to `~/.codex/config.json`. Codex CLI reads MCP server definitions as JSON fr
 {
   "mcpServers": {
     "orca": {
-      "command": "orca",
+      "command": "orca-autoflow",
       "args": ["mcp", "serve"]
     }
   }
@@ -160,7 +184,7 @@ Add to `.cursor/mcp.json` at the repo root for project-scoped access. For a glob
 {
   "mcpServers": {
     "orca": {
-      "command": "orca",
+      "command": "orca-autoflow",
       "args": ["mcp", "serve"]
     }
   }
@@ -175,7 +199,7 @@ Add to `~/.gemini/settings.json`. Gemini CLI picks up MCP servers from this file
 {
   "mcpServers": {
     "orca": {
-      "command": "orca",
+      "command": "orca-autoflow",
       "args": ["mcp", "serve"]
     }
   }
@@ -190,7 +214,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`. Windsurf loads MCP server definiti
 {
   "mcpServers": {
     "orca": {
-      "command": "orca",
+      "command": "orca-autoflow",
       "args": ["mcp", "serve"]
     }
   }
@@ -205,7 +229,7 @@ Any agent that reads MCP server definitions uses the same structure — add it w
 {
   "mcpServers": {
     "orca": {
-      "command": "orca",
+      "command": "orca-autoflow",
       "args": ["mcp", "serve"]
     }
   }
@@ -335,7 +359,7 @@ orca retry <run-id>                 Relaunch a failed/killed run with feedback
 orca config init                    Scaffold .orca/ in current repo
 orca config validate                Check AGENTS.md and policies
 orca mcp serve                      Start MCP server (stdio transport)
-orca version                        Show version
+orca-autoflow version                        Show version
 ```
 
 ## License

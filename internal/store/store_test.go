@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/orca-cli/orca/internal/store"
+	"github.com/Munsik-Park/orca-autoflow/internal/store"
 )
 
 // TestOpen_Idempotent verifies that calling Open twice on the same path does not fail.

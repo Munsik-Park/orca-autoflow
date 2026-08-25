@@ -1,4 +1,4 @@
-module github.com/orca-cli/orca
+module github.com/Munsik-Park/orca-autoflow
 
 go 1.25.0
 

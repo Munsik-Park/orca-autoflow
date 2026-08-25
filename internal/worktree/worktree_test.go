@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/orca-cli/orca/internal/testutil"
-	"github.com/orca-cli/orca/internal/worktree"
+	"github.com/Munsik-Park/orca-autoflow/internal/testutil"
+	"github.com/Munsik-Park/orca-autoflow/internal/worktree"
 )
 
 // TestCreateForRun_Happy verifies that CreateForRun creates a valid worktree.

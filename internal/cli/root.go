@@ -7,9 +7,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "orca",
-	Short: "orca — coding agent orchestrator",
-	Long: `orca orchestrates multiple coding agents running in parallel git worktrees.
+	Use:   "orca-autoflow",
+	Short: "orca-autoflow — AutoFlow-oriented coding agent orchestrator",
+	Long: `orca-autoflow orchestrates multiple coding agents running in parallel git worktrees.
 It manages pod lifecycle, run state transitions, constraints, and agent adapters.`,
 }
 

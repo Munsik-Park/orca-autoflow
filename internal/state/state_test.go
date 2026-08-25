@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/orca-cli/orca/internal/state"
+	"github.com/Munsik-Park/orca-autoflow/internal/state"
 )
 
 // TestApply_LegalTransitions verifies every legal cell in the PRD §5.1 transition table.
