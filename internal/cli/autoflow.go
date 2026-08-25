@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,9 +24,15 @@ type autoflowStepOptions struct {
 	phase            string
 	adapter          string
 	model            string
+	codexBin         string
+	profile          string
+	sandbox          string
+	networkAccess    bool
+	outputLast       string
 	prompt           string
 	promptFile       string
 	runner           string
+	printPrompt      bool
 	allowClosedIssue bool
 	dryRun           bool
 }
@@ -44,9 +51,15 @@ func newAutoflowStepCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.phase, "phase", "", "AutoFlow phase to run")
 	cmd.Flags().StringVar(&opts.adapter, "adapter", "codex", "agent adapter")
 	cmd.Flags().StringVar(&opts.model, "model", "", "adapter model identifier; omit to use the adapter default")
+	cmd.Flags().StringVar(&opts.codexBin, "codex-bin", "", "Codex executable for the built-in codex adapter")
+	cmd.Flags().StringVar(&opts.profile, "profile", "", "Codex profile for the built-in codex adapter")
+	cmd.Flags().StringVar(&opts.sandbox, "sandbox", "workspace-write", "Codex sandbox: read-only, workspace-write, danger-full-access")
+	cmd.Flags().BoolVar(&opts.networkAccess, "network", false, "allow network access inside the Codex sandbox")
+	cmd.Flags().StringVar(&opts.outputLast, "output", "", "write Codex's last message to this file")
 	cmd.Flags().StringVar(&opts.prompt, "prompt", "", "task prompt")
 	cmd.Flags().StringVar(&opts.promptFile, "prompt-file", "", "path to task prompt file")
-	cmd.Flags().StringVar(&opts.runner, "runner", "", "adapter runner path")
+	cmd.Flags().StringVar(&opts.runner, "runner", "", "external adapter runner path; default is the built-in codex adapter")
+	cmd.Flags().BoolVar(&opts.printPrompt, "print-prompt", false, "print the composed built-in adapter prompt without running Codex")
 	cmd.Flags().BoolVar(&opts.allowClosedIssue, "allow-closed-issue", false, "allow running against a closed GitHub issue")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "validate and print the adapter command without running it")
 	return cmd
@@ -64,6 +77,10 @@ func runAutoflowStep(cmd *cobra.Command, opts *autoflowStepOptions) error {
 	}
 	if opts.prompt != "" && opts.promptFile != "" {
 		return fmt.Errorf("choose either --prompt or --prompt-file, not both")
+	}
+	sandbox, err := normalizeSandbox(opts.sandbox)
+	if err != nil {
+		return err
 	}
 
 	target, err := filepath.Abs(opts.target)
@@ -87,39 +104,16 @@ func runAutoflowStep(cmd *cobra.Command, opts *autoflowStepOptions) error {
 		return fmt.Errorf("missing required input artifact(s): %s", strings.Join(relativizeAll(target, missingInputs), ", "))
 	}
 
-	runner := opts.runner
-	if runner == "" {
-		runner = filepath.Join(target, "scripts", "orca", "codex-agent.sh")
+	if opts.runner != "" {
+		err = runExternalAutoflowAdapter(ctx, cmd, opts, target, spec, sandbox)
+	} else {
+		err = runBuiltInCodexAdapter(ctx, cmd, opts, target, spec, sandbox)
 	}
-	if _, err := os.Stat(runner); err != nil {
-		return fmt.Errorf("codex adapter runner not found at %s: %w", runner, err)
+	if err != nil {
+		return err
 	}
-
-	argv := []string{runner, "--target", target, "--phase", spec.Name}
-	if opts.model != "" {
-		argv = append(argv, "--model", opts.model)
-	}
-	if opts.promptFile != "" {
-		argv = append(argv, "--prompt-file", opts.promptFile)
-	} else if opts.prompt != "" {
-		argv = append(argv, "--prompt", opts.prompt)
-	}
-
-	if opts.dryRun {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "phase: %s\nagent_type: %s\nrunner: %s\n", spec.Name, spec.AgentType, runner)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "command: %s\n", shellJoin(argv))
+	if opts.dryRun || opts.printPrompt {
 		return nil
-	}
-
-	execCmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	execCmd.Dir = target
-	execCmd.Stdout = cmd.OutOrStdout()
-	execCmd.Stderr = cmd.ErrOrStderr()
-	if opts.prompt == "" && opts.promptFile == "" {
-		execCmd.Stdin = cmd.InOrStdin()
-	}
-	if err := execCmd.Run(); err != nil {
-		return fmt.Errorf("run %s adapter: %w", opts.adapter, err)
 	}
 
 	outputs := autoflow.RenderPaths(target, opts.issue, spec.Outputs)
@@ -144,6 +138,181 @@ func runAutoflowStep(cmd *cobra.Command, opts *autoflowStepOptions) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "completed phase %s for issue #%d; next phase: %s\n", spec.Name, opts.issue, spec.Next)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "state: %s\n", autoflow.StatePath(target, opts.issue))
 	return nil
+}
+
+func runBuiltInCodexAdapter(ctx context.Context, cmd *cobra.Command, opts *autoflowStepOptions, target string, spec autoflow.PhaseSpec, sandbox string) error {
+	roleContract, roleSource, err := autoflow.RoleContract(target, spec.AgentType)
+	if err != nil {
+		return err
+	}
+
+	argv := codexAdapterArgs(codexExecutable(opts), target, opts, sandbox)
+	if opts.dryRun && !opts.printPrompt {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "phase: %s\nagent_type: %s\nadapter: built-in codex\nrole_contract: %s\n", spec.Name, spec.AgentType, roleSource)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "command: %s\n", shellJoin(argv))
+		return nil
+	}
+
+	taskPrompt, err := readTaskPrompt(cmd, opts, true)
+	if err != nil {
+		return err
+	}
+	composedPrompt := autoflow.ComposePrompt(autoflow.PromptRequest{
+		Issue:        opts.issue,
+		TargetRoot:   target,
+		Phase:        spec,
+		RoleContract: roleContract,
+		RoleSource:   roleSource,
+		TaskPrompt:   taskPrompt,
+	})
+
+	if opts.printPrompt {
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), composedPrompt)
+		return nil
+	}
+
+	if _, err := exec.LookPath(argv[0]); err != nil {
+		return fmt.Errorf("codex executable %q is not on PATH: %w", argv[0], err)
+	}
+	execCmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	execCmd.Dir = target
+	execCmd.Stdin = strings.NewReader(composedPrompt)
+	execCmd.Stdout = cmd.OutOrStdout()
+	execCmd.Stderr = cmd.ErrOrStderr()
+	if err := execCmd.Run(); err != nil {
+		return fmt.Errorf("run codex adapter: %w", err)
+	}
+	return nil
+}
+
+func runExternalAutoflowAdapter(ctx context.Context, cmd *cobra.Command, opts *autoflowStepOptions, target string, spec autoflow.PhaseSpec, sandbox string) error {
+	if _, err := os.Stat(opts.runner); err != nil {
+		return fmt.Errorf("codex adapter runner not found at %s: %w", opts.runner, err)
+	}
+	argv := externalAdapterArgs(opts.runner, target, opts, spec, sandbox)
+
+	if opts.dryRun {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "phase: %s\nagent_type: %s\nrunner: %s\n", spec.Name, spec.AgentType, opts.runner)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "command: %s\n", shellJoin(argv))
+		return nil
+	}
+
+	execCmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	execCmd.Dir = target
+	execCmd.Stdout = cmd.OutOrStdout()
+	execCmd.Stderr = cmd.ErrOrStderr()
+	if opts.prompt == "" && opts.promptFile == "" {
+		execCmd.Stdin = cmd.InOrStdin()
+	}
+	if err := execCmd.Run(); err != nil {
+		return fmt.Errorf("run %s adapter: %w", opts.adapter, err)
+	}
+	return nil
+}
+
+func codexExecutable(opts *autoflowStepOptions) string {
+	if opts.codexBin != "" {
+		return opts.codexBin
+	}
+	if env := os.Getenv("CODEX_BIN"); env != "" {
+		return env
+	}
+	return "codex"
+}
+
+func codexAdapterArgs(codexBin string, target string, opts *autoflowStepOptions, sandbox string) []string {
+	argv := []string{
+		codexBin,
+		"exec",
+		"-C", target,
+		"-s", sandbox,
+		"-c", "approval_policy=\"never\"",
+		"-c", fmt.Sprintf("sandbox_workspace_write.network_access=%t", opts.networkAccess),
+	}
+	if opts.model != "" {
+		argv = append(argv, "--model", opts.model)
+	}
+	if opts.profile != "" {
+		argv = append(argv, "--profile", opts.profile)
+	}
+	if opts.outputLast != "" {
+		argv = append(argv, "--output-last-message", opts.outputLast)
+	}
+	return append(argv, "-")
+}
+
+func externalAdapterArgs(runner string, target string, opts *autoflowStepOptions, spec autoflow.PhaseSpec, sandbox string) []string {
+	argv := []string{runner, "--target", target, "--phase", spec.Name, "--sandbox", sandbox}
+	if opts.model != "" {
+		argv = append(argv, "--model", opts.model)
+	}
+	if opts.profile != "" {
+		argv = append(argv, "--profile", opts.profile)
+	}
+	if opts.networkAccess {
+		argv = append(argv, "--network")
+	}
+	if opts.outputLast != "" {
+		argv = append(argv, "--output", opts.outputLast)
+	}
+	if opts.printPrompt {
+		argv = append(argv, "--print-prompt")
+	}
+	if opts.promptFile != "" {
+		argv = append(argv, "--prompt-file", opts.promptFile)
+	} else if opts.prompt != "" {
+		argv = append(argv, "--prompt", opts.prompt)
+	}
+	return argv
+}
+
+func normalizeSandbox(sandbox string) (string, error) {
+	if strings.TrimSpace(sandbox) == "" {
+		return "workspace-write", nil
+	}
+	switch sandbox {
+	case "read-only", "workspace-write", "danger-full-access":
+		return sandbox, nil
+	default:
+		return "", fmt.Errorf("unsupported sandbox %q", sandbox)
+	}
+}
+
+func readTaskPrompt(cmd *cobra.Command, opts *autoflowStepOptions, required bool) (string, error) {
+	if opts.promptFile != "" {
+		data, err := os.ReadFile(opts.promptFile)
+		if err != nil {
+			return "", fmt.Errorf("read prompt file: %w", err)
+		}
+		prompt := string(data)
+		if required && strings.TrimSpace(prompt) == "" {
+			return "", fmt.Errorf("prompt file is empty: %s", opts.promptFile)
+		}
+		return prompt, nil
+	}
+	if opts.prompt != "" {
+		return opts.prompt, nil
+	}
+	if !required {
+		return "", nil
+	}
+
+	in := cmd.InOrStdin()
+	if file, ok := in.(*os.File); ok {
+		info, err := file.Stat()
+		if err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			return "", fmt.Errorf("provide --prompt, --prompt-file, or piped stdin")
+		}
+	}
+	data, err := io.ReadAll(in)
+	if err != nil {
+		return "", fmt.Errorf("read prompt from stdin: %w", err)
+	}
+	prompt := string(data)
+	if strings.TrimSpace(prompt) == "" {
+		return "", fmt.Errorf("provide --prompt, --prompt-file, or piped stdin")
+	}
+	return prompt, nil
 }
 
 func missingPaths(paths []string) []string {

@@ -8,11 +8,13 @@ import (
 
 // PhaseSpec defines one artifact-based AutoFlow phase boundary.
 type PhaseSpec struct {
-	Name      string
-	AgentType string
-	Inputs    []string
-	Outputs   []string
-	Next      string
+	Name       string
+	AgentType  string
+	Inputs     []string
+	Outputs    []string
+	Next       string
+	ModelHint  string
+	EffortHint string
 }
 
 var phases = map[string]PhaseSpec{
@@ -25,7 +27,9 @@ var phases = map[string]PhaseSpec{
 		Outputs: []string{
 			".autoflow/issue-{issue}-red.md",
 		},
-		Next: "green",
+		Next:       "green",
+		ModelHint:  "sonnet",
+		EffortHint: "inherit",
 	},
 	"green": {
 		Name:      "green",
@@ -37,7 +41,9 @@ var phases = map[string]PhaseSpec{
 		Outputs: []string{
 			".autoflow/issue-{issue}-green.md",
 		},
-		Next: "verify",
+		Next:       "verify",
+		ModelHint:  "opus",
+		EffortHint: "inherit",
 	},
 }
 

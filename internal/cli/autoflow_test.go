@@ -33,10 +33,7 @@ func TestAutoflowStep_DryRunRequiresInputs(t *testing.T) {
 func TestAutoflowStep_DryRunPrintsCommand(t *testing.T) {
 	target := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(target, "scripts", "orca"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
-	runner := filepath.Join(target, "scripts", "orca", "codex-agent.sh")
-	require.NoError(t, os.WriteFile(runner, []byte("#!/bin/sh\n"), 0o755))
 
 	cmd := newAutoflowStepCmd()
 	var opts autoflowStepOptions
@@ -52,6 +49,9 @@ func TestAutoflowStep_DryRunPrintsCommand(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "phase: red")
 	assert.Contains(t, out, "agent_type: autoflow-tester")
+	assert.Contains(t, out, "adapter: built-in codex")
+	assert.Contains(t, out, "role_contract: built-in:autoflow-tester")
+	assert.Contains(t, out, "codex exec")
 	assert.Contains(t, out, "--model gpt-5-codex")
 }
 
@@ -81,7 +81,53 @@ func TestAutoflowStepRejectsClosedGitHubIssue(t *testing.T) {
 	assert.Contains(t, err.Error(), "--allow-closed-issue")
 }
 
-func TestAutoflowStepRunsAdapterAndWritesState(t *testing.T) {
+func TestAutoflowStepRunsBuiltInCodexAdapterAndWritesState(t *testing.T) {
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+	fakebin := t.TempDir()
+	fakeCodex := filepath.Join(fakebin, "codex")
+	require.NoError(t, os.WriteFile(fakeCodex, []byte("#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > .autoflow/codex.args\ncat > .autoflow/codex.prompt\nprintf 'red\\n' > .autoflow/issue-123-red.md\n"), 0o755))
+
+	cmd := newAutoflowStepCmd()
+	var opts autoflowStepOptions
+	opts.target = target
+	opts.issue = 123
+	opts.phase = "red"
+	opts.adapter = "codex"
+	opts.codexBin = fakeCodex
+	opts.model = "gpt-5-codex"
+	opts.prompt = "write tests"
+
+	out, err := runAutoflowStepCapture(cmd, &opts)
+	require.NoError(t, err)
+	assert.Contains(t, out, "completed phase red")
+
+	args, err := os.ReadFile(filepath.Join(target, ".autoflow", "codex.args"))
+	require.NoError(t, err)
+	assert.Contains(t, string(args), "exec\n")
+	assert.Contains(t, string(args), "--model\n")
+	assert.Contains(t, string(args), "gpt-5-codex\n")
+
+	prompt, err := os.ReadFile(filepath.Join(target, ".autoflow", "codex.prompt"))
+	require.NoError(t, err)
+	assert.Contains(t, string(prompt), "AutoFlow phase: red")
+	assert.Contains(t, string(prompt), "AutoFlow role: autoflow-tester")
+	assert.Contains(t, string(prompt), "Required output artifacts:\n- .autoflow/issue-123-red.md")
+	assert.Contains(t, string(prompt), "Task prompt:\nwrite tests")
+
+	stateBytes, err := os.ReadFile(filepath.Join(target, ".autoflow", "issue-123-orca.json"))
+	require.NoError(t, err)
+	var state map[string]any
+	require.NoError(t, json.Unmarshal(stateBytes, &state))
+	assert.Equal(t, float64(123), state["issue"])
+	assert.Equal(t, true, state["active"])
+	assert.Equal(t, "green", state["phase"])
+	assert.Equal(t, "red", state["last_completed_phase"])
+	assert.Equal(t, "codex", state["adapter"])
+}
+
+func TestAutoflowStepExternalRunnerStillSupported(t *testing.T) {
 	target := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(target, "scripts", "orca"), 0o755))
@@ -95,6 +141,7 @@ func TestAutoflowStepRunsAdapterAndWritesState(t *testing.T) {
 	opts.issue = 123
 	opts.phase = "red"
 	opts.adapter = "codex"
+	opts.runner = runner
 	opts.model = "gpt-5-codex"
 	opts.prompt = "write tests"
 
@@ -106,16 +153,6 @@ func TestAutoflowStepRunsAdapterAndWritesState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(args), "--phase red")
 	assert.Contains(t, string(args), "--model gpt-5-codex")
-
-	stateBytes, err := os.ReadFile(filepath.Join(target, ".autoflow", "issue-123-orca.json"))
-	require.NoError(t, err)
-	var state map[string]any
-	require.NoError(t, json.Unmarshal(stateBytes, &state))
-	assert.Equal(t, float64(123), state["issue"])
-	assert.Equal(t, true, state["active"])
-	assert.Equal(t, "green", state["phase"])
-	assert.Equal(t, "red", state["last_completed_phase"])
-	assert.Equal(t, "codex", state["adapter"])
 }
 
 func runAutoflowStepCapture(cmd *cobra.Command, opts *autoflowStepOptions) (string, error) {

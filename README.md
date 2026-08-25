@@ -112,9 +112,10 @@ The full CLI reference with flags is in [DOCS.md](DOCS.md).
 ### AutoFlow Step
 
 The initial AutoFlow integration runs one phase at a time. It validates the
-phase's required `.autoflow/` input artifacts, invokes the target repo's
-`scripts/orca/codex-agent.sh`, validates required output artifacts, then writes
-Orca-owned state to `.autoflow/issue-<N>-orca.json`.
+phase's required `.autoflow/` input artifacts, composes the AutoFlow role
+contract inside the `orca-autoflow` binary, invokes `codex exec`, validates
+required output artifacts, then writes Orca-owned state to
+`.autoflow/issue-<N>-orca.json`.
 
 ```sh
 orca-autoflow autoflow step \
@@ -124,6 +125,11 @@ orca-autoflow autoflow step \
   --adapter codex \
   --prompt-file .autoflow/issue-123-red-prompt.md
 ```
+
+The target project does not need `scripts/orca/codex-agent.sh` for the default
+path. Use `--runner /path/to/codex-agent.sh` only when intentionally replaying
+the older shell adapter. Use `--print-prompt` to inspect the prompt without
+calling Codex, and `--dry-run` to verify the command boundary.
 
 When Codex is authenticated with a ChatGPT subscription, omit `--model` unless
 you have verified the model is supported by that account. Orca then lets Codex
