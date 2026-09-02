@@ -50,6 +50,10 @@ The command creates these files without overwriting existing content:
 .autoflow/issue-123-verification-design.md
 .autoflow/issue-123-red-prompt.md
 .autoflow/issue-123-green-prompt.md
+.autoflow/issue-123-verify-arbitration-prompt.md
+.autoflow/issue-123-refine-impl-prompt.md
+.autoflow/issue-123-refine-test-reconfirm-prompt.md
+.autoflow/issue-123-gate-quality-prompt.md
 ```
 
 Flags:
@@ -70,7 +74,9 @@ orca-autoflow autoflow init --target /path/to/project --issue 123 --gitignore
 
 ## `autoflow step`
 
-Run one artifact-gated AutoFlow phase. Supported phases are `red` and `green`.
+Run one artifact-gated AutoFlow phase. Supported phases are `red`, `green`,
+`verify-arbitration`, `refine-impl`, `refine-test-reconfirm`, and
+`gate-quality`.
 
 ```sh
 orca-autoflow autoflow step \
@@ -100,7 +106,7 @@ Flags:
 |---|---:|---|
 | `--target` | `.` | Target repository root |
 | `--issue` | `0` | GitHub issue number; must be positive |
-| `--phase` | none | AutoFlow phase; currently `red` or `green` |
+| `--phase` | none | AutoFlow phase |
 | `--adapter` | `codex` | Agent adapter; only `codex` is supported |
 | `--model` | none | Codex model identifier; omitted means Codex default |
 | `--codex-bin` | `codex` | Codex executable path; `CODEX_BIN` is also honored |
@@ -154,7 +160,85 @@ Outputs:
 .autoflow/issue-123-green.md
 ```
 
-Next phase: `verify`
+Next phase: `verify-arbitration`
+
+### `verify-arbitration`
+
+Inputs:
+
+```text
+.autoflow/issue-123-verification-design.md
+.autoflow/issue-123-red.md
+.autoflow/issue-123-green.md
+```
+
+Outputs:
+
+```text
+.autoflow/issue-123-verify-arbitration.md
+```
+
+Next phase: `refine-impl`
+
+### `refine-impl`
+
+Inputs:
+
+```text
+.autoflow/issue-123-verification-design.md
+.autoflow/issue-123-red.md
+.autoflow/issue-123-green.md
+.autoflow/issue-123-verify-arbitration.md
+```
+
+Outputs:
+
+```text
+.autoflow/issue-123-refine-impl.md
+```
+
+Next phase: `refine-test-reconfirm`
+
+### `refine-test-reconfirm`
+
+Inputs:
+
+```text
+.autoflow/issue-123-verification-design.md
+.autoflow/issue-123-red.md
+.autoflow/issue-123-green.md
+.autoflow/issue-123-verify-arbitration.md
+.autoflow/issue-123-refine-impl.md
+```
+
+Outputs:
+
+```text
+.autoflow/issue-123-refine-test-reconfirm.md
+```
+
+Next phase: `gate-quality`
+
+### `gate-quality`
+
+Inputs:
+
+```text
+.autoflow/issue-123-verification-design.md
+.autoflow/issue-123-red.md
+.autoflow/issue-123-green.md
+.autoflow/issue-123-verify-arbitration.md
+.autoflow/issue-123-refine-impl.md
+.autoflow/issue-123-refine-test-reconfirm.md
+```
+
+Outputs:
+
+```text
+.autoflow/issue-123-gate-quality.md
+```
+
+Next phase: `complete`
 
 ## External Runner Compatibility
 

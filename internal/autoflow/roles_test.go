@@ -10,11 +10,27 @@ import (
 )
 
 func TestRoleContractFallsBackToBuiltInContract(t *testing.T) {
-	body, source, err := RoleContract(t.TempDir(), "autoflow-tester")
-	require.NoError(t, err)
+	tests := []struct {
+		agentType string
+		contains  string
+	}{
+		{agentType: "autoflow-tester", contains: "AutoFlow Test AI"},
+		{agentType: "autoflow-implementer", contains: "AutoFlow Developer AI"},
+		{agentType: "autoflow-verifier", contains: "AutoFlow Verification AI"},
+		{agentType: "autoflow-refiner", contains: "AutoFlow Refinement AI"},
+		{agentType: "autoflow-test-reconfirmer", contains: "AutoFlow Test Reconfirmation AI"},
+		{agentType: "autoflow-quality-gate", contains: "AutoFlow Quality Gate AI"},
+	}
 
-	assert.Equal(t, "built-in:autoflow-tester", source)
-	assert.Contains(t, body, "AutoFlow Test AI")
+	for _, tt := range tests {
+		t.Run(tt.agentType, func(t *testing.T) {
+			body, source, err := RoleContract(t.TempDir(), tt.agentType)
+			require.NoError(t, err)
+
+			assert.Equal(t, "built-in:"+tt.agentType, source)
+			assert.Contains(t, body, tt.contains)
+		})
+	}
 }
 
 func TestRoleContractPrefersTargetLocalAgentFile(t *testing.T) {

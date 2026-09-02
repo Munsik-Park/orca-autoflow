@@ -51,6 +51,10 @@ func PlanScaffold(opts ScaffoldOptions) (ScaffoldResult, error) {
 		fmt.Sprintf(".autoflow/issue-%d-verification-design.md", opts.Issue),
 		fmt.Sprintf(".autoflow/issue-%d-red-prompt.md", opts.Issue),
 		fmt.Sprintf(".autoflow/issue-%d-green-prompt.md", opts.Issue),
+		fmt.Sprintf(".autoflow/issue-%d-verify-arbitration-prompt.md", opts.Issue),
+		fmt.Sprintf(".autoflow/issue-%d-refine-impl-prompt.md", opts.Issue),
+		fmt.Sprintf(".autoflow/issue-%d-refine-test-reconfirm-prompt.md", opts.Issue),
+		fmt.Sprintf(".autoflow/issue-%d-gate-quality-prompt.md", opts.Issue),
 	}
 	if opts.IncludeGitignore {
 		relPaths = append(relPaths, ".gitignore")
@@ -157,6 +161,14 @@ func scaffoldContent(issue int, relPath string) (string, error) {
 		return redPromptTemplate(issue), nil
 	case fmt.Sprintf(".autoflow/issue-%d-green-prompt.md", issue):
 		return greenPromptTemplate(issue), nil
+	case fmt.Sprintf(".autoflow/issue-%d-verify-arbitration-prompt.md", issue):
+		return verifyArbitrationPromptTemplate(issue), nil
+	case fmt.Sprintf(".autoflow/issue-%d-refine-impl-prompt.md", issue):
+		return refineImplPromptTemplate(issue), nil
+	case fmt.Sprintf(".autoflow/issue-%d-refine-test-reconfirm-prompt.md", issue):
+		return refineTestReconfirmPromptTemplate(issue), nil
+	case fmt.Sprintf(".autoflow/issue-%d-gate-quality-prompt.md", issue):
+		return gateQualityPromptTemplate(issue), nil
 	case ".gitignore":
 		return localStateIgnorePattern + "\n", nil
 	default:
@@ -215,6 +227,42 @@ Read .autoflow/issue-%d-verification-design.md and .autoflow/issue-%d-red.md, th
 
 Write the phase report to .autoflow/issue-%d-green.md.
 `, issue, issue, issue, issue)
+}
+
+func verifyArbitrationPromptTemplate(issue int) string {
+	return fmt.Sprintf(`# AutoFlow Verify Arbitration Prompt for Issue #%d
+
+Read .autoflow/issue-%d-verification-design.md, .autoflow/issue-%d-red.md, and .autoflow/issue-%d-green.md, then decide whether the implementation satisfies the tests and issue acceptance criteria or requires refinement.
+
+Write the phase report to .autoflow/issue-%d-verify-arbitration.md.
+`, issue, issue, issue, issue, issue)
+}
+
+func refineImplPromptTemplate(issue int) string {
+	return fmt.Sprintf(`# AutoFlow Refine Implementation Prompt for Issue #%d
+
+Read .autoflow/issue-%d-verification-design.md, .autoflow/issue-%d-red.md, .autoflow/issue-%d-green.md, and .autoflow/issue-%d-verify-arbitration.md, then make the smallest implementation correction needed for the verified gap.
+
+Write the phase report to .autoflow/issue-%d-refine-impl.md.
+`, issue, issue, issue, issue, issue, issue)
+}
+
+func refineTestReconfirmPromptTemplate(issue int) string {
+	return fmt.Sprintf(`# AutoFlow Refine Test Reconfirm Prompt for Issue #%d
+
+Read .autoflow/issue-%d-verification-design.md, .autoflow/issue-%d-red.md, .autoflow/issue-%d-green.md, .autoflow/issue-%d-verify-arbitration.md, and .autoflow/issue-%d-refine-impl.md, then reconfirm that the refined implementation satisfies the original test intent.
+
+Write the phase report to .autoflow/issue-%d-refine-test-reconfirm.md.
+`, issue, issue, issue, issue, issue, issue, issue)
+}
+
+func gateQualityPromptTemplate(issue int) string {
+	return fmt.Sprintf(`# AutoFlow Gate Quality Prompt for Issue #%d
+
+Read all prior issue #%d AutoFlow artifacts and decide whether the issue is ready for handoff, needs another refinement pass, or is blocked.
+
+Write the phase report to .autoflow/issue-%d-gate-quality.md.
+`, issue, issue, issue)
 }
 
 // GitignoreAdvice returns the ignore pattern for Orca-owned local state.
