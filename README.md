@@ -105,9 +105,32 @@ queued → running → ready → shipped
 | `orca retry` | Relaunch a failed or killed run with feedback |
 | `orca config` | Manage AGENTS.md, skills, policies per repo |
 | `orca mcp serve` | Run Orca as an MCP server (stdio) |
+| `orca-autoflow autoflow init` | Create issue-scoped AutoFlow templates in a target repository |
 | `orca-autoflow autoflow step` | Run one artifact-gated AutoFlow phase through an adapter |
 
 The full CLI reference with flags is in [DOCS.md](DOCS.md).
+
+### AutoFlow Init
+
+Create the `.autoflow/` templates needed to run issue-scoped AutoFlow phases in
+a target repository:
+
+```sh
+orca-autoflow autoflow init \
+  --target /path/to/project \
+  --issue 123
+```
+
+The command creates:
+
+- `.autoflow/issue-123-verification-design.md`
+- `.autoflow/issue-123-red-prompt.md`
+- `.autoflow/issue-123-green-prompt.md`
+
+Existing files are preserved. Use `--dry-run` to preview the paths without
+writing files. Use `--gitignore` to add `.autoflow/issue-*-orca.json` to the
+target repository's `.gitignore`; otherwise the command prints that pattern as
+an advisory note.
 
 ### AutoFlow Step
 

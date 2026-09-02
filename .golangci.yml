@@ -41,10 +41,10 @@ linters:
           severity: warning
           disabled: false
 
-issues:
-  exclude-rules:
-    # Test files can use unexported test helpers without issue.
-    - path: "_test\\.go"
-      linters:
-        - revive
-        - gocritic
+  exclusions:
+    rules:
+      # Test files can use unexported test helpers without issue.
+      - path: "_test\\.go"
+        linters:
+          - revive
+          - gocritic

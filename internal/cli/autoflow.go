@@ -37,6 +37,29 @@ type autoflowStepOptions struct {
 	dryRun           bool
 }
 
+type autoflowInitOptions struct {
+	target           string
+	issue            int
+	includeGitignore bool
+	dryRun           bool
+}
+
+func newAutoflowInitCmd() *cobra.Command {
+	opts := &autoflowInitOptions{}
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Create AutoFlow templates in a target repository",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAutoflowInit(cmd, opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.target, "target", ".", "target project root")
+	cmd.Flags().IntVar(&opts.issue, "issue", 0, "GitHub issue number")
+	cmd.Flags().BoolVar(&opts.includeGitignore, "gitignore", false, "add Orca local state files to .gitignore")
+	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "print files that would be created without writing them")
+	return cmd
+}
+
 func newAutoflowStepCmd() *cobra.Command {
 	opts := &autoflowStepOptions{}
 	cmd := &cobra.Command{
@@ -63,6 +86,39 @@ func newAutoflowStepCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.allowClosedIssue, "allow-closed-issue", false, "allow running against a closed GitHub issue")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "validate and print the adapter command without running it")
 	return cmd
+}
+
+func runAutoflowInit(cmd *cobra.Command, opts *autoflowInitOptions) error {
+	if opts.issue <= 0 {
+		return fmt.Errorf("--issue must be a positive integer")
+	}
+	target, err := filepath.Abs(opts.target)
+	if err != nil {
+		return fmt.Errorf("resolve target: %w", err)
+	}
+
+	scaffoldOpts := autoflow.ScaffoldOptions{
+		TargetRoot:       target,
+		Issue:            opts.issue,
+		IncludeGitignore: opts.includeGitignore,
+	}
+	planned, err := autoflow.PlanScaffold(scaffoldOpts)
+	if err != nil {
+		return err
+	}
+	if opts.dryRun {
+		printScaffoldResult(cmd, planned, "would create", "exists")
+		printGitignoreAdvice(cmd, opts.includeGitignore)
+		return nil
+	}
+
+	created, err := autoflow.CreateScaffold(scaffoldOpts)
+	if err != nil {
+		return err
+	}
+	printScaffoldResult(cmd, created, "create", "exists")
+	printGitignoreAdvice(cmd, opts.includeGitignore)
+	return nil
 }
 
 func runAutoflowStep(cmd *cobra.Command, opts *autoflowStepOptions) error {
@@ -338,6 +394,23 @@ func relativizeAll(root string, paths []string) []string {
 	return out
 }
 
+func printScaffoldResult(cmd *cobra.Command, result autoflow.ScaffoldResult, missingLabel string, existingLabel string) {
+	for _, artifact := range result.Artifacts {
+		label := missingLabel
+		if artifact.Exists {
+			label = existingLabel
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", label, artifact.RelativePath)
+	}
+}
+
+func printGitignoreAdvice(cmd *cobra.Command, includeGitignore bool) {
+	if includeGitignore {
+		return
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "note: add %s to .gitignore or rerun with --gitignore to ignore Orca local state\n", autoflow.GitignoreAdvice())
+}
+
 func artifactMap(target string, issue int, spec autoflow.PhaseSpec) map[string]string {
 	artifacts := map[string]string{}
 	for _, path := range append(spec.Inputs, spec.Outputs...) {
@@ -357,7 +430,7 @@ func shellJoin(args []string) string {
 			continue
 		}
 		if strings.IndexFunc(arg, func(r rune) bool {
-			return !(r == '/' || r == '-' || r == '_' || r == '.' || r == ':' || r == '=' || (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'))
+			return !isShellSafeArgRune(r)
 		}) == -1 {
 			quoted = append(quoted, arg)
 			continue
@@ -365,6 +438,21 @@ func shellJoin(args []string) string {
 		quoted = append(quoted, "'"+strings.ReplaceAll(arg, "'", "'\\''")+"'")
 	}
 	return strings.Join(quoted, " ")
+}
+
+func isShellSafeArgRune(r rune) bool {
+	switch {
+	case r == '/' || r == '-' || r == '_' || r == '.' || r == ':' || r == '=':
+		return true
+	case r >= '0' && r <= '9':
+		return true
+	case r >= 'A' && r <= 'Z':
+		return true
+	case r >= 'a' && r <= 'z':
+		return true
+	default:
+		return false
+	}
 }
 
 func verifyIssueOpen(ctx context.Context, target string, issue int, allowClosed bool) error {
@@ -391,6 +479,6 @@ func verifyIssueOpen(ctx context.Context, target string, issue int, allowClosed 
 }
 
 func init() {
-	autoflowCmd.AddCommand(newAutoflowStepCmd())
+	autoflowCmd.AddCommand(newAutoflowInitCmd(), newAutoflowStepCmd())
 	rootCmd.AddCommand(autoflowCmd)
 }

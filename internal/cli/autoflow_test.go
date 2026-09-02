@@ -13,6 +13,98 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAutoflowInitCreatesTemplatesThatCanPrintRedPrompt(t *testing.T) {
+	target := t.TempDir()
+	cmd := newAutoflowInitCmd()
+	var opts autoflowInitOptions
+	opts.target = target
+	opts.issue = 123
+
+	out, err := runAutoflowInitCapture(cmd, &opts)
+	require.NoError(t, err)
+	assert.Contains(t, out, "create: .autoflow")
+	assert.Contains(t, out, "create: .autoflow/issue-123-verification-design.md")
+	assert.Contains(t, out, "create: .autoflow/issue-123-red-prompt.md")
+	assert.Contains(t, out, "create: .autoflow/issue-123-green-prompt.md")
+	assert.Contains(t, out, ".autoflow/issue-*-orca.json")
+
+	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-verification-design.md"))
+	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-red-prompt.md"))
+	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-green-prompt.md"))
+
+	stepCmd := newAutoflowStepCmd()
+	var stepOpts autoflowStepOptions
+	stepOpts.target = target
+	stepOpts.issue = 123
+	stepOpts.phase = "red"
+	stepOpts.adapter = "codex"
+	stepOpts.promptFile = filepath.Join(target, ".autoflow", "issue-123-red-prompt.md")
+	stepOpts.printPrompt = true
+
+	prompt, err := runAutoflowStepCapture(stepCmd, &stepOpts)
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "AutoFlow phase: red")
+	assert.Contains(t, prompt, "Required input artifacts:\n- .autoflow/issue-123-verification-design.md")
+	assert.Contains(t, prompt, "Task prompt:\n# AutoFlow Red Prompt for Issue #123")
+}
+
+func TestAutoflowInitDryRunDoesNotCreateFiles(t *testing.T) {
+	target := t.TempDir()
+	cmd := newAutoflowInitCmd()
+	var opts autoflowInitOptions
+	opts.target = target
+	opts.issue = 123
+	opts.dryRun = true
+
+	out, err := runAutoflowInitCapture(cmd, &opts)
+	require.NoError(t, err)
+	assert.Contains(t, out, "would create: .autoflow")
+	assert.Contains(t, out, "would create: .autoflow/issue-123-verification-design.md")
+	assert.NoDirExists(t, filepath.Join(target, ".autoflow"))
+}
+
+func TestAutoflowInitPreservesExistingArtifacts(t *testing.T) {
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+	designPath := filepath.Join(target, ".autoflow", "issue-123-verification-design.md")
+	require.NoError(t, os.WriteFile(designPath, []byte("custom design\n"), 0o644))
+
+	cmd := newAutoflowInitCmd()
+	var opts autoflowInitOptions
+	opts.target = target
+	opts.issue = 123
+
+	out, err := runAutoflowInitCapture(cmd, &opts)
+	require.NoError(t, err)
+	assert.Contains(t, out, "exists: .autoflow")
+	assert.Contains(t, out, "exists: .autoflow/issue-123-verification-design.md")
+	assert.Contains(t, out, "create: .autoflow/issue-123-red-prompt.md")
+
+	data, err := os.ReadFile(designPath)
+	require.NoError(t, err)
+	assert.Equal(t, "custom design\n", string(data))
+}
+
+func TestAutoflowInitCanAddGitignoreEntry(t *testing.T) {
+	target := t.TempDir()
+	gitignorePath := filepath.Join(target, ".gitignore")
+	require.NoError(t, os.WriteFile(gitignorePath, []byte("dist"), 0o644))
+
+	cmd := newAutoflowInitCmd()
+	var opts autoflowInitOptions
+	opts.target = target
+	opts.issue = 123
+	opts.includeGitignore = true
+
+	out, err := runAutoflowInitCapture(cmd, &opts)
+	require.NoError(t, err)
+	assert.Contains(t, out, "create: .gitignore")
+
+	data, err := os.ReadFile(gitignorePath)
+	require.NoError(t, err)
+	assert.Equal(t, "dist\n.autoflow/issue-*-orca.json\n", string(data))
+}
+
 func TestAutoflowStep_DryRunRequiresInputs(t *testing.T) {
 	target := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
@@ -160,6 +252,14 @@ func runAutoflowStepCapture(cmd *cobra.Command, opts *autoflowStepOptions) (stri
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
 	err := runAutoflowStep(cmd, opts)
+	return buf.String(), err
+}
+
+func runAutoflowInitCapture(cmd *cobra.Command, opts *autoflowInitOptions) (string, error) {
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	err := runAutoflowInit(cmd, opts)
 	return buf.String(), err
 }
 
