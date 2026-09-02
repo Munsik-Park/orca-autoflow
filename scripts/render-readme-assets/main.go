@@ -1,3 +1,4 @@
+// Package main renders deterministic README image assets.
 package main
 
 import (
@@ -170,8 +171,12 @@ func writePNG(path string, img image.Image) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	return png.Encode(file, img)
+	encodeErr := png.Encode(file, img)
+	closeErr := file.Close()
+	if encodeErr != nil {
+		return encodeErr
+	}
+	return closeErr
 }
 
 func fill(img draw.Image, r image.Rectangle, c color.Color) {
