@@ -57,7 +57,8 @@ go build -o ~/go/bin/orca-autoflow ./cmd/orca
 Pre-built binaries are not published for this fork yet. Build from source and
 place the `orca-autoflow` binary on `PATH`.
 
-Then point the agent's MCP config at `orca mcp serve` — see [Agent Setup](#agent-setup) below.
+Then use the AutoFlow commands below. The MCP setup examples document the
+planned agent-control surface and will become active when `mcp serve` lands.
 
 ## How It Works
 
@@ -89,7 +90,7 @@ queued → running → ready → shipped
          blocked  failed → retry
 ```
 
-#### CLI Commands
+#### Roadmap CLI Commands
 
 | Command | Purpose |
 |---|---|
@@ -108,7 +109,7 @@ queued → running → ready → shipped
 | `orca-autoflow autoflow init` | Create issue-scoped AutoFlow templates in a target repository |
 | `orca-autoflow autoflow step` | Run one artifact-gated AutoFlow phase through an adapter |
 
-The full CLI reference with flags is in [DOCS.md](DOCS.md).
+The implemented CLI reference with flags is in [DOCS.md](DOCS.md).
 
 ### AutoFlow Init
 
@@ -159,6 +160,10 @@ you have verified the model is supported by that account. Orca then lets Codex
 use its configured default model.
 
 ## Agent Setup
+
+The MCP server command shown below is part of the planned full Orca surface. The
+current CLI supports `autoflow init`, `autoflow step`, and `version`; see
+[DOCS.md](DOCS.md) for the implemented command reference.
 
 ### Claude Code
 
@@ -371,7 +376,7 @@ Run `orca config init` to scaffold the `.orca/` directory in any repo. `orca con
 
 ## Commands
 
-The full CLI surface.
+The planned full CLI surface.
 
 ```
 orca run <goal>                     Launch a single run
