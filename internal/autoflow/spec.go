@@ -17,6 +17,15 @@ type PhaseSpec struct {
 	EffortHint string
 }
 
+var phaseOrder = []string{
+	"red",
+	"green",
+	"verify-arbitration",
+	"refine-impl",
+	"refine-test-reconfirm",
+	"gate-quality",
+}
+
 var phases = map[string]PhaseSpec{
 	"red": {
 		Name:      "red",
@@ -41,7 +50,73 @@ var phases = map[string]PhaseSpec{
 		Outputs: []string{
 			".autoflow/issue-{issue}-green.md",
 		},
-		Next:       "verify",
+		Next:       "verify-arbitration",
+		ModelHint:  "opus",
+		EffortHint: "inherit",
+	},
+	"verify-arbitration": {
+		Name:      "verify-arbitration",
+		AgentType: "autoflow-verifier",
+		Inputs: []string{
+			".autoflow/issue-{issue}-verification-design.md",
+			".autoflow/issue-{issue}-red.md",
+			".autoflow/issue-{issue}-green.md",
+		},
+		Outputs: []string{
+			".autoflow/issue-{issue}-verify-arbitration.md",
+		},
+		Next:       "refine-impl",
+		ModelHint:  "opus",
+		EffortHint: "inherit",
+	},
+	"refine-impl": {
+		Name:      "refine-impl",
+		AgentType: "autoflow-refiner",
+		Inputs: []string{
+			".autoflow/issue-{issue}-verification-design.md",
+			".autoflow/issue-{issue}-red.md",
+			".autoflow/issue-{issue}-green.md",
+			".autoflow/issue-{issue}-verify-arbitration.md",
+		},
+		Outputs: []string{
+			".autoflow/issue-{issue}-refine-impl.md",
+		},
+		Next:       "refine-test-reconfirm",
+		ModelHint:  "opus",
+		EffortHint: "inherit",
+	},
+	"refine-test-reconfirm": {
+		Name:      "refine-test-reconfirm",
+		AgentType: "autoflow-test-reconfirmer",
+		Inputs: []string{
+			".autoflow/issue-{issue}-verification-design.md",
+			".autoflow/issue-{issue}-red.md",
+			".autoflow/issue-{issue}-green.md",
+			".autoflow/issue-{issue}-verify-arbitration.md",
+			".autoflow/issue-{issue}-refine-impl.md",
+		},
+		Outputs: []string{
+			".autoflow/issue-{issue}-refine-test-reconfirm.md",
+		},
+		Next:       "gate-quality",
+		ModelHint:  "sonnet",
+		EffortHint: "inherit",
+	},
+	"gate-quality": {
+		Name:      "gate-quality",
+		AgentType: "autoflow-quality-gate",
+		Inputs: []string{
+			".autoflow/issue-{issue}-verification-design.md",
+			".autoflow/issue-{issue}-red.md",
+			".autoflow/issue-{issue}-green.md",
+			".autoflow/issue-{issue}-verify-arbitration.md",
+			".autoflow/issue-{issue}-refine-impl.md",
+			".autoflow/issue-{issue}-refine-test-reconfirm.md",
+		},
+		Outputs: []string{
+			".autoflow/issue-{issue}-gate-quality.md",
+		},
+		Next:       "complete",
 		ModelHint:  "opus",
 		EffortHint: "inherit",
 	},
@@ -59,7 +134,7 @@ func LookupPhase(name string) (PhaseSpec, error) {
 
 // SupportedPhases returns the current phase names in execution order.
 func SupportedPhases() []string {
-	return []string{"red", "green"}
+	return append([]string(nil), phaseOrder...)
 }
 
 // RenderPaths expands the issue placeholder and joins each path to targetRoot.

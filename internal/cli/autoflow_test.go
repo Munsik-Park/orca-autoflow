@@ -26,11 +26,19 @@ func TestAutoflowInitCreatesTemplatesThatCanPrintRedPrompt(t *testing.T) {
 	assert.Contains(t, out, "create: .autoflow/issue-123-verification-design.md")
 	assert.Contains(t, out, "create: .autoflow/issue-123-red-prompt.md")
 	assert.Contains(t, out, "create: .autoflow/issue-123-green-prompt.md")
+	assert.Contains(t, out, "create: .autoflow/issue-123-verify-arbitration-prompt.md")
+	assert.Contains(t, out, "create: .autoflow/issue-123-refine-impl-prompt.md")
+	assert.Contains(t, out, "create: .autoflow/issue-123-refine-test-reconfirm-prompt.md")
+	assert.Contains(t, out, "create: .autoflow/issue-123-gate-quality-prompt.md")
 	assert.Contains(t, out, ".autoflow/issue-*-orca.json")
 
 	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-verification-design.md"))
 	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-red-prompt.md"))
 	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-green-prompt.md"))
+	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-verify-arbitration-prompt.md"))
+	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-refine-impl-prompt.md"))
+	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-refine-test-reconfirm-prompt.md"))
+	assert.FileExists(t, filepath.Join(target, ".autoflow", "issue-123-gate-quality-prompt.md"))
 
 	stepCmd := newAutoflowStepCmd()
 	var stepOpts autoflowStepOptions
@@ -122,6 +130,26 @@ func TestAutoflowStep_DryRunRequiresInputs(t *testing.T) {
 	assert.Contains(t, err.Error(), ".autoflow/issue-123-verification-design.md")
 }
 
+func TestAutoflowStep_DryRunRequiresPriorPhaseInputs(t *testing.T) {
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-red.md"), []byte("red\n"), 0o644))
+	cmd := newAutoflowStepCmd()
+
+	var opts autoflowStepOptions
+	opts.target = target
+	opts.issue = 123
+	opts.phase = "verify-arbitration"
+	opts.adapter = "codex"
+	opts.dryRun = true
+
+	err := runAutoflowStep(cmd, &opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required input artifact(s): .autoflow/issue-123-green.md")
+	assert.NotContains(t, err.Error(), target)
+}
+
 func TestAutoflowStep_DryRunPrintsCommand(t *testing.T) {
 	target := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
@@ -145,6 +173,30 @@ func TestAutoflowStep_DryRunPrintsCommand(t *testing.T) {
 	assert.Contains(t, out, "role_contract: built-in:autoflow-tester")
 	assert.Contains(t, out, "codex exec")
 	assert.Contains(t, out, "--model gpt-5-codex")
+}
+
+func TestAutoflowStepPrintPromptSupportsVerifyArbitration(t *testing.T) {
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-red.md"), []byte("red\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-green.md"), []byte("green\n"), 0o644))
+
+	cmd := newAutoflowStepCmd()
+	var opts autoflowStepOptions
+	opts.target = target
+	opts.issue = 123
+	opts.phase = "verify-arbitration"
+	opts.adapter = "codex"
+	opts.prompt = "verify implementation"
+	opts.printPrompt = true
+
+	out, err := runAutoflowStepCapture(cmd, &opts)
+	require.NoError(t, err)
+	assert.Contains(t, out, "AutoFlow phase: verify-arbitration")
+	assert.Contains(t, out, "AutoFlow role: autoflow-verifier")
+	assert.Contains(t, out, "Required input artifacts:\n- .autoflow/issue-123-verification-design.md\n- .autoflow/issue-123-red.md\n- .autoflow/issue-123-green.md")
+	assert.Contains(t, out, "Required output artifacts:\n- .autoflow/issue-123-verify-arbitration.md")
 }
 
 func TestAutoflowStepRejectsClosedGitHubIssue(t *testing.T) {
@@ -217,6 +269,31 @@ func TestAutoflowStepRunsBuiltInCodexAdapterAndWritesState(t *testing.T) {
 	assert.Equal(t, "green", state["phase"])
 	assert.Equal(t, "red", state["last_completed_phase"])
 	assert.Equal(t, "codex", state["adapter"])
+}
+
+func TestAutoflowStepRequiresPhaseOutputFromNewPhase(t *testing.T) {
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-red.md"), []byte("red\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-green.md"), []byte("green\n"), 0o644))
+	fakebin := t.TempDir()
+	fakeCodex := filepath.Join(fakebin, "codex")
+	require.NoError(t, os.WriteFile(fakeCodex, []byte("#!/bin/sh\nset -eu\ncat > .autoflow/codex.prompt\n"), 0o755))
+
+	cmd := newAutoflowStepCmd()
+	var opts autoflowStepOptions
+	opts.target = target
+	opts.issue = 123
+	opts.phase = "verify-arbitration"
+	opts.adapter = "codex"
+	opts.codexBin = fakeCodex
+	opts.prompt = "verify implementation"
+
+	_, err := runAutoflowStepCapture(cmd, &opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "adapter completed but required output artifact(s) are missing: .autoflow/issue-123-verify-arbitration.md")
+	assert.NotContains(t, err.Error(), target)
 }
 
 func TestAutoflowStepExternalRunnerStillSupported(t *testing.T) {

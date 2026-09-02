@@ -127,6 +127,10 @@ The command creates:
 - `.autoflow/issue-123-verification-design.md`
 - `.autoflow/issue-123-red-prompt.md`
 - `.autoflow/issue-123-green-prompt.md`
+- `.autoflow/issue-123-verify-arbitration-prompt.md`
+- `.autoflow/issue-123-refine-impl-prompt.md`
+- `.autoflow/issue-123-refine-test-reconfirm-prompt.md`
+- `.autoflow/issue-123-gate-quality-prompt.md`
 
 Existing files are preserved. Use `--dry-run` to preview the paths without
 writing files. Use `--gitignore` to add `.autoflow/issue-*-orca.json` to the
@@ -135,7 +139,7 @@ an advisory note.
 
 ### AutoFlow Step
 
-The initial AutoFlow integration runs one phase at a time. It validates the
+The AutoFlow integration runs one phase at a time. It validates the
 phase's required `.autoflow/` input artifacts, composes the AutoFlow role
 contract inside the `orca-autoflow` binary, invokes `codex exec`, validates
 required output artifacts, then writes Orca-owned state to
@@ -154,6 +158,9 @@ The target project does not need `scripts/orca/codex-agent.sh` for the default
 path. Use `--runner /path/to/codex-agent.sh` only when intentionally replaying
 the older shell adapter. Use `--print-prompt` to inspect the prompt without
 calling Codex, and `--dry-run` to verify the command boundary.
+
+Supported phases are `red`, `green`, `verify-arbitration`, `refine-impl`,
+`refine-test-reconfirm`, and `gate-quality`.
 
 When Codex is authenticated with a ChatGPT subscription, omit `--model` unless
 you have verified the model is supported by that account. Orca then lets Codex
