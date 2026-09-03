@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const localStateIgnorePattern = ".autoflow/issue-*-orca.json"
+var localStateIgnorePatterns = []string{
+	".autoflow/issue-*-orca.json",
+	".autoflow/logs/",
+}
 
 // ScaffoldOptions controls creation of target-repository AutoFlow artifacts.
 type ScaffoldOptions struct {
@@ -135,7 +138,8 @@ func addGitignoreEntry(path string) error {
 		return err
 	}
 	body := string(data)
-	if GitignoreContainsLocalState(body) {
+	missingPatterns := missingLocalStateIgnorePatterns(body)
+	if len(missingPatterns) == 0 {
 		return nil
 	}
 	prefix := ""
@@ -146,7 +150,7 @@ func addGitignoreEntry(path string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := file.WriteString(prefix + localStateIgnorePattern + "\n"); err != nil {
+	if _, err := file.WriteString(prefix + strings.Join(missingPatterns, "\n") + "\n"); err != nil {
 		_ = file.Close()
 		return err
 	}
@@ -170,7 +174,7 @@ func scaffoldContent(issue int, relPath string) (string, error) {
 	case fmt.Sprintf(".autoflow/issue-%d-gate-quality-prompt.md", issue):
 		return gateQualityPromptTemplate(issue), nil
 	case ".gitignore":
-		return localStateIgnorePattern + "\n", nil
+		return GitignoreAdvice() + "\n", nil
 	default:
 		return "", fmt.Errorf("no scaffold template for %s", relPath)
 	}
@@ -267,16 +271,28 @@ Write the phase report to .autoflow/issue-%d-gate-quality.md.
 
 // GitignoreAdvice returns the ignore pattern for Orca-owned local state.
 func GitignoreAdvice() string {
-	return localStateIgnorePattern
+	return strings.Join(localStateIgnorePatterns, "\n")
 }
 
 // GitignoreContainsLocalState reports whether a .gitignore body already ignores
 // Orca's per-issue local state files.
 func GitignoreContainsLocalState(body string) bool {
+	return len(missingLocalStateIgnorePatterns(body)) == 0
+}
+
+func missingLocalStateIgnorePatterns(body string) []string {
+	missing := map[string]bool{}
+	for _, pattern := range localStateIgnorePatterns {
+		missing[pattern] = true
+	}
 	for _, line := range strings.Split(body, "\n") {
-		if strings.TrimSpace(line) == localStateIgnorePattern {
-			return true
+		delete(missing, strings.TrimSpace(line))
+	}
+	var out []string
+	for _, pattern := range localStateIgnorePatterns {
+		if missing[pattern] {
+			out = append(out, pattern)
 		}
 	}
-	return false
+	return out
 }

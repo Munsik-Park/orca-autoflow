@@ -110,7 +110,7 @@ func TestAutoflowInitCanAddGitignoreEntry(t *testing.T) {
 
 	data, err := os.ReadFile(gitignorePath)
 	require.NoError(t, err)
-	assert.Equal(t, "dist\n.autoflow/issue-*-orca.json\n", string(data))
+	assert.Equal(t, "dist\n.autoflow/issue-*-orca.json\n.autoflow/logs/\n", string(data))
 }
 
 func TestAutoflowStep_DryRunRequiresInputs(t *testing.T) {
@@ -231,7 +231,7 @@ func TestAutoflowStepRunsBuiltInCodexAdapterAndWritesState(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
 	fakebin := t.TempDir()
 	fakeCodex := filepath.Join(fakebin, "codex")
-	require.NoError(t, os.WriteFile(fakeCodex, []byte("#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > .autoflow/codex.args\ncat > .autoflow/codex.prompt\nprintf 'red\\n' > .autoflow/issue-123-red.md\n"), 0o755))
+	require.NoError(t, os.WriteFile(fakeCodex, []byte("#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > .autoflow/codex.args\ncat > .autoflow/codex.prompt\nprintf 'stdout SECRET_TOKEN=topsecret\\n'\nprintf 'stderr authorization: Bearer abc123456789\\n' >&2\nprintf 'red\\n' > .autoflow/issue-123-red.md\n"), 0o755))
 
 	cmd := newAutoflowStepCmd()
 	var opts autoflowStepOptions
@@ -246,6 +246,7 @@ func TestAutoflowStepRunsBuiltInCodexAdapterAndWritesState(t *testing.T) {
 	out, err := runAutoflowStepCapture(cmd, &opts)
 	require.NoError(t, err)
 	assert.Contains(t, out, "completed phase red")
+	assert.Contains(t, out, "metadata: ")
 
 	args, err := os.ReadFile(filepath.Join(target, ".autoflow", "codex.args"))
 	require.NoError(t, err)
@@ -269,6 +270,135 @@ func TestAutoflowStepRunsBuiltInCodexAdapterAndWritesState(t *testing.T) {
 	assert.Equal(t, "green", state["phase"])
 	assert.Equal(t, "red", state["last_completed_phase"])
 	assert.Equal(t, "codex", state["adapter"])
+	metadataRel, ok := state["last_run_metadata"].(string)
+	require.True(t, ok)
+	assert.Contains(t, metadataRel, ".autoflow/logs/issue-123/red-")
+	assert.Contains(t, metadataRel, "metadata.json")
+
+	metadataBytes, err := os.ReadFile(filepath.Join(target, filepath.FromSlash(metadataRel)))
+	require.NoError(t, err)
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal(metadataBytes, &metadata))
+	assert.Equal(t, "red", metadata["phase"])
+	assert.Equal(t, "codex", metadata["adapter"])
+	assert.Equal(t, "gpt-5-codex", metadata["model"])
+	assert.Equal(t, "workspace-write", metadata["sandbox"])
+	assert.Equal(t, false, metadata["network_access"])
+	assert.Equal(t, "built-in:autoflow-tester", metadata["role_contract_source"])
+	assert.Equal(t, "success", metadata["status"])
+	assert.Equal(t, float64(0), metadata["exit_code"])
+	command, ok := metadata["command"].([]any)
+	require.True(t, ok)
+	assert.Contains(t, command, fakeCodex)
+
+	logs, ok := metadata["logs"].(map[string]any)
+	require.True(t, ok)
+	stdoutLog, ok := logs["stdout"].(string)
+	require.True(t, ok)
+	stderrLog, ok := logs["stderr"].(string)
+	require.True(t, ok)
+	stdoutBytes, err := os.ReadFile(filepath.Join(target, filepath.FromSlash(stdoutLog)))
+	require.NoError(t, err)
+	assert.Contains(t, string(stdoutBytes), "SECRET_TOKEN=[REDACTED]")
+	assert.NotContains(t, string(stdoutBytes), "topsecret")
+	stderrBytes, err := os.ReadFile(filepath.Join(target, filepath.FromSlash(stderrLog)))
+	require.NoError(t, err)
+	assert.Contains(t, string(stderrBytes), "authorization: Bearer [REDACTED]")
+	assert.NotContains(t, string(stderrBytes), "abc123456789")
+}
+
+func TestAutoflowStepFailedBuiltInCodexWritesMetadataAndLogs(t *testing.T) {
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+	fakebin := t.TempDir()
+	fakeCodex := filepath.Join(fakebin, "codex")
+	require.NoError(t, os.WriteFile(fakeCodex, []byte("#!/bin/sh\nset -eu\ncat > .autoflow/codex.prompt\nprintf 'stdout API_KEY=secret-value\\n'\nprintf 'failed hard\\n' >&2\nexit 17\n"), 0o755))
+
+	cmd := newAutoflowStepCmd()
+	var opts autoflowStepOptions
+	opts.target = target
+	opts.issue = 123
+	opts.phase = "red"
+	opts.adapter = "codex"
+	opts.codexBin = fakeCodex
+	opts.prompt = "write tests"
+
+	out, err := runAutoflowStepCapture(cmd, &opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "run codex adapter")
+	assert.Contains(t, out, "metadata: .autoflow/logs/issue-123/red-")
+	assert.Contains(t, out, "stdout log: .autoflow/logs/issue-123/red-")
+	assert.Contains(t, out, "stderr log: .autoflow/logs/issue-123/red-")
+	assert.NoFileExists(t, filepath.Join(target, ".autoflow", "issue-123-orca.json"))
+
+	matches, err := filepath.Glob(filepath.Join(target, ".autoflow", "logs", "issue-123", "red-*", "metadata.json"))
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+
+	metadataBytes, err := os.ReadFile(matches[0])
+	require.NoError(t, err)
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal(metadataBytes, &metadata))
+	assert.Equal(t, "error", metadata["status"])
+	assert.Equal(t, float64(17), metadata["exit_code"])
+	assert.Contains(t, metadata["error"], "run codex adapter")
+	assert.Equal(t, "built-in:autoflow-tester", metadata["role_contract_source"])
+
+	logs, ok := metadata["logs"].(map[string]any)
+	require.True(t, ok)
+	stdoutLog, ok := logs["stdout"].(string)
+	require.True(t, ok)
+	stdoutBytes, err := os.ReadFile(filepath.Join(target, filepath.FromSlash(stdoutLog)))
+	require.NoError(t, err)
+	assert.Contains(t, string(stdoutBytes), "API_KEY=[REDACTED]")
+	assert.NotContains(t, string(stdoutBytes), "secret-value")
+	stderrLog, ok := logs["stderr"].(string)
+	require.True(t, ok)
+	stderrBytes, err := os.ReadFile(filepath.Join(target, filepath.FromSlash(stderrLog)))
+	require.NoError(t, err)
+	assert.Contains(t, string(stderrBytes), "failed hard")
+}
+
+func TestMetadataCommandBoundaryRedactsInlinePrompt(t *testing.T) {
+	got := metadataCommandBoundary([]string{
+		"runner",
+		"--prompt",
+		"API_KEY=secret-value",
+		"--model",
+		"gpt-5-codex",
+		"--prompt=SECRET_TOKEN=topsecret",
+	})
+
+	assert.Equal(t, []string{
+		"runner",
+		"--prompt",
+		"[REDACTED]",
+		"--model",
+		"gpt-5-codex",
+		"--prompt=[REDACTED]",
+	}, got)
+}
+
+func TestRedactingLogWriterRedactsSecretsAcrossChunkBoundaries(t *testing.T) {
+	var buf bytes.Buffer
+	writer := &redactingLogWriter{w: &buf}
+
+	n, err := writer.Write([]byte("SECRET_TOKEN="))
+	require.NoError(t, err)
+	assert.Equal(t, len("SECRET_TOKEN="), n)
+	n, err = writer.Write([]byte("topsecret\nAuthorization: Bearer "))
+	require.NoError(t, err)
+	assert.Equal(t, len("topsecret\nAuthorization: Bearer "), n)
+	n, err = writer.Write([]byte("abc123456789\n"))
+	require.NoError(t, err)
+	assert.Equal(t, len("abc123456789\n"), n)
+	require.NoError(t, writer.Flush())
+
+	assert.Contains(t, buf.String(), "SECRET_TOKEN=[REDACTED]")
+	assert.Contains(t, buf.String(), "Authorization: Bearer [REDACTED]")
+	assert.NotContains(t, buf.String(), "topsecret")
+	assert.NotContains(t, buf.String(), "abc123456789")
 }
 
 func TestAutoflowStepRequiresPhaseOutputFromNewPhase(t *testing.T) {

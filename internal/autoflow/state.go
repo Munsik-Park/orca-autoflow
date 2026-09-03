@@ -16,6 +16,7 @@ type State struct {
 	LastCompletedPhase string            `json:"last_completed_phase,omitempty"`
 	Adapter            string            `json:"adapter"`
 	Model              string            `json:"model,omitempty"`
+	LastRunMetadata    string            `json:"last_run_metadata,omitempty"`
 	Artifacts          map[string]string `json:"artifacts"`
 	UpdatedAt          string            `json:"updated_at"`
 }
