@@ -199,6 +199,56 @@ func TestAutoflowStepPrintPromptSupportsVerifyArbitration(t *testing.T) {
 	assert.Contains(t, out, "Required output artifacts:\n- .autoflow/issue-123-verify-arbitration.md")
 }
 
+func TestAutoflowStepPrintPromptUsesOpenGitHubIssueWhenPromptIsOmitted(t *testing.T) {
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+	require.NoError(t, runCommand(target, "git", "init", "-q"))
+	require.NoError(t, runCommand(target, "git", "remote", "add", "origin", "git@github.com:orca/example.git"))
+
+	fakebin := t.TempDir()
+	writeFakeGH(t, fakebin, `{"title":"Add issue intake","body":"Use the issue body as the default task prompt.\n\n## Acceptance Criteria\n- title is included\n- body is included","state":"OPEN","labels":[{"name":"enhancement"}]}`)
+
+	cmd := newAutoflowStepCmd()
+	var opts autoflowStepOptions
+	opts.target = target
+	opts.issue = 123
+	opts.phase = "red"
+	opts.adapter = "codex"
+	opts.printPrompt = true
+
+	out, err := runAutoflowStepCapture(cmd, &opts)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Task prompt:\n# GitHub Issue #123: Add issue intake")
+	assert.Contains(t, out, "State: OPEN")
+	assert.Contains(t, out, "Labels: enhancement")
+	assert.Contains(t, out, "Use the issue body as the default task prompt.")
+	assert.Contains(t, out, "body is included")
+}
+
+func TestAutoflowStepPrintPromptSupportsExplicitRepo(t *testing.T) {
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+
+	fakebin := t.TempDir()
+	writeFakeGH(t, fakebin, `{"title":"Explicit repo","body":"loaded through --repo","state":"OPEN","labels":[]}`)
+
+	cmd := newAutoflowStepCmd()
+	var opts autoflowStepOptions
+	opts.target = target
+	opts.issue = 123
+	opts.repo = "orca/example"
+	opts.phase = "red"
+	opts.adapter = "codex"
+	opts.printPrompt = true
+
+	out, err := runAutoflowStepCapture(cmd, &opts)
+	require.NoError(t, err)
+	assert.Contains(t, out, "# GitHub Issue #123: Explicit repo")
+	assert.Contains(t, out, "loaded through --repo")
+}
+
 func TestAutoflowStepRejectsClosedGitHubIssue(t *testing.T) {
 	target := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
@@ -207,9 +257,7 @@ func TestAutoflowStepRejectsClosedGitHubIssue(t *testing.T) {
 	require.NoError(t, runCommand(target, "git", "remote", "add", "origin", "git@github.com:orca/example.git"))
 
 	fakebin := t.TempDir()
-	fakeGH := filepath.Join(fakebin, "gh")
-	require.NoError(t, os.WriteFile(fakeGH, []byte("#!/bin/sh\nprintf 'CLOSED\\n'\n"), 0o755))
-	t.Setenv("PATH", fakebin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeFakeGH(t, fakebin, `{"title":"Done","body":"already complete","state":"CLOSED","labels":[]}`)
 
 	cmd := newAutoflowStepCmd()
 	var opts autoflowStepOptions
@@ -223,6 +271,81 @@ func TestAutoflowStepRejectsClosedGitHubIssue(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "issue #123 is CLOSED")
 	assert.Contains(t, err.Error(), "--allow-closed-issue")
+}
+
+func TestAutoflowStepAllowClosedGitHubIssueForReplay(t *testing.T) {
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+	require.NoError(t, runCommand(target, "git", "init", "-q"))
+	require.NoError(t, runCommand(target, "git", "remote", "add", "origin", "git@github.com:orca/example.git"))
+
+	fakebin := t.TempDir()
+	writeFakeGH(t, fakebin, `{"title":"Replay closed issue","body":"closed body","state":"CLOSED","labels":[]}`)
+
+	cmd := newAutoflowStepCmd()
+	var opts autoflowStepOptions
+	opts.target = target
+	opts.issue = 123
+	opts.phase = "red"
+	opts.adapter = "codex"
+	opts.printPrompt = true
+	opts.allowClosedIssue = true
+
+	out, err := runAutoflowStepCapture(cmd, &opts)
+	require.NoError(t, err)
+	assert.Contains(t, out, "# GitHub Issue #123: Replay closed issue")
+	assert.Contains(t, out, "State: CLOSED")
+	assert.Contains(t, out, "closed body")
+}
+
+func TestAutoflowStepGitHubIssueIntakeReportsGHFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		ghScript   string
+		wantErr    string
+		wantDetail string
+	}{
+		{
+			name:       "not found",
+			ghScript:   "#!/bin/sh\nprintf 'GraphQL: Could not resolve to an Issue with the number of 123.\\n' >&2\nexit 1\n",
+			wantErr:    "could not read GitHub issue #123 with gh",
+			wantDetail: "Could not resolve",
+		},
+		{
+			name:       "offline",
+			ghScript:   "#!/bin/sh\nprintf 'Post \"https://api.github.com/graphql\": dial tcp: lookup api.github.com: no such host\\n' >&2\nexit 1\n",
+			wantErr:    "could not read GitHub issue #123 with gh",
+			wantDetail: "no such host",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+			require.NoError(t, runCommand(target, "git", "init", "-q"))
+			require.NoError(t, runCommand(target, "git", "remote", "add", "origin", "git@github.com:orca/example.git"))
+
+			fakebin := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(fakebin, "gh"), []byte(tt.ghScript), 0o755))
+			t.Setenv("PATH", fakebin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			cmd := newAutoflowStepCmd()
+			var opts autoflowStepOptions
+			opts.target = target
+			opts.issue = 123
+			opts.phase = "red"
+			opts.adapter = "codex"
+			opts.printPrompt = true
+
+			_, err := runAutoflowStepCapture(cmd, &opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.Contains(t, err.Error(), tt.wantDetail)
+		})
+	}
 }
 
 func TestAutoflowStepRunsBuiltInCodexAdapterAndWritesState(t *testing.T) {
@@ -474,4 +597,12 @@ func runCommand(dir string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	return cmd.Run()
+}
+
+func writeFakeGH(t *testing.T, fakebin string, issueJSON string) {
+	t.Helper()
+	fakeGH := filepath.Join(fakebin, "gh")
+	script := "#!/bin/sh\nset -eu\ncat <<'JSON'\n" + issueJSON + "\nJSON\n"
+	require.NoError(t, os.WriteFile(fakeGH, []byte(script), 0o755))
+	t.Setenv("PATH", fakebin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
