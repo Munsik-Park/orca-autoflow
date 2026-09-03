@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ var autoflowCmd = &cobra.Command{
 type autoflowStepOptions struct {
 	target           string
 	issue            int
+	repo             string
 	phase            string
 	adapter          string
 	model            string
@@ -75,6 +77,7 @@ func newAutoflowStepCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.target, "target", ".", "target project root")
 	cmd.Flags().IntVar(&opts.issue, "issue", 0, "GitHub issue number")
+	cmd.Flags().StringVar(&opts.repo, "repo", "", "GitHub repository in owner/name form; defaults to target origin")
 	cmd.Flags().StringVar(&opts.phase, "phase", "", "AutoFlow phase to run")
 	cmd.Flags().StringVar(&opts.adapter, "adapter", "codex", "agent adapter")
 	cmd.Flags().StringVar(&opts.model, "model", "", "adapter model identifier; omit to use the adapter default")
@@ -151,8 +154,14 @@ func runAutoflowStep(cmd *cobra.Command, opts *autoflowStepOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := verifyIssueOpen(ctx, target, opts.issue, opts.allowClosedIssue); err != nil {
-		return err
+	var issue *githubIssue
+	var issueUnavailable string
+	if !opts.allowClosedIssue || !hasLocalTaskPromptSource(cmd, opts) {
+		var err error
+		issue, issueUnavailable, err = loadGitHubIssue(ctx, target, opts)
+		if err != nil {
+			return err
+		}
 	}
 	spec, err := autoflow.LookupPhase(opts.phase)
 	if err != nil {
@@ -171,9 +180,9 @@ func runAutoflowStep(cmd *cobra.Command, opts *autoflowStepOptions) error {
 	metadata.NetworkAccess = opts.networkAccess
 
 	if opts.runner != "" {
-		err = runExternalAutoflowAdapter(ctx, cmd, opts, target, spec, sandbox, &metadata)
+		err = runExternalAutoflowAdapter(ctx, cmd, opts, target, spec, sandbox, &metadata, issue, issueUnavailable)
 	} else {
-		err = runBuiltInCodexAdapter(ctx, cmd, opts, target, spec, sandbox, &metadata)
+		err = runBuiltInCodexAdapter(ctx, cmd, opts, target, spec, sandbox, &metadata, issue, issueUnavailable)
 	}
 	if err != nil {
 		finishPhaseRunMetadata(&metadata, err)
@@ -224,7 +233,7 @@ func runAutoflowStep(cmd *cobra.Command, opts *autoflowStepOptions) error {
 	return nil
 }
 
-func runBuiltInCodexAdapter(ctx context.Context, cmd *cobra.Command, opts *autoflowStepOptions, target string, spec autoflow.PhaseSpec, sandbox string, metadata *autoflow.PhaseRunMetadata) error {
+func runBuiltInCodexAdapter(ctx context.Context, cmd *cobra.Command, opts *autoflowStepOptions, target string, spec autoflow.PhaseSpec, sandbox string, metadata *autoflow.PhaseRunMetadata, issue *githubIssue, issueUnavailable string) error {
 	roleContract, roleSource, err := autoflow.RoleContract(target, spec.AgentType)
 	if err != nil {
 		return err
@@ -242,7 +251,7 @@ func runBuiltInCodexAdapter(ctx context.Context, cmd *cobra.Command, opts *autof
 		return nil
 	}
 
-	taskPrompt, err := readTaskPrompt(cmd, opts, true)
+	taskPrompt, err := readTaskPrompt(cmd, opts, true, issue, issueUnavailable)
 	if err != nil {
 		return err
 	}
@@ -285,7 +294,7 @@ func runBuiltInCodexAdapter(ctx context.Context, cmd *cobra.Command, opts *autof
 	return nil
 }
 
-func runExternalAutoflowAdapter(ctx context.Context, cmd *cobra.Command, opts *autoflowStepOptions, target string, spec autoflow.PhaseSpec, sandbox string, metadata *autoflow.PhaseRunMetadata) error {
+func runExternalAutoflowAdapter(ctx context.Context, cmd *cobra.Command, opts *autoflowStepOptions, target string, spec autoflow.PhaseSpec, sandbox string, metadata *autoflow.PhaseRunMetadata, issue *githubIssue, issueUnavailable string) error {
 	if _, err := os.Stat(opts.runner); err != nil {
 		return fmt.Errorf("codex adapter runner not found at %s: %w", opts.runner, err)
 	}
@@ -309,7 +318,15 @@ func runExternalAutoflowAdapter(ctx context.Context, cmd *cobra.Command, opts *a
 	execCmd.Stdout = logs.stdout
 	execCmd.Stderr = logs.stderr
 	if opts.prompt == "" && opts.promptFile == "" {
-		execCmd.Stdin = cmd.InOrStdin()
+		taskPrompt, err := readTaskPrompt(cmd, opts, false, issue, issueUnavailable)
+		if err != nil {
+			return err
+		}
+		if taskPrompt != "" {
+			execCmd.Stdin = strings.NewReader(taskPrompt)
+		} else {
+			execCmd.Stdin = cmd.InOrStdin()
+		}
 	}
 	runErr := execCmd.Run()
 	closeErr := logs.close()
@@ -559,7 +576,117 @@ func normalizeSandbox(sandbox string) (string, error) {
 	}
 }
 
-func readTaskPrompt(cmd *cobra.Command, opts *autoflowStepOptions, required bool) (string, error) {
+type githubIssue struct {
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	State  string `json:"state"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+func loadGitHubIssue(ctx context.Context, target string, opts *autoflowStepOptions) (*githubIssue, string, error) {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return nil, "gh executable is not on PATH", nil
+	}
+
+	repo := strings.TrimSpace(opts.repo)
+	if repo == "" {
+		inferred, reason := inferGitHubRepo(ctx, target)
+		if inferred == "" {
+			return nil, reason, nil
+		}
+		repo = inferred
+	}
+
+	args := []string{
+		"issue", "view", fmt.Sprintf("%d", opts.issue),
+		"--repo", repo,
+		"--json", "title,body,state,labels",
+	}
+	check := exec.CommandContext(ctx, "gh", args...)
+	check.Dir = target
+	out, err := check.CombinedOutput()
+	if err != nil {
+		return nil, "", fmt.Errorf("could not read GitHub issue #%d with gh: %w: %s", opts.issue, err, strings.TrimSpace(string(out)))
+	}
+
+	var issue githubIssue
+	if err := json.Unmarshal(out, &issue); err != nil {
+		return nil, "", fmt.Errorf("parse GitHub issue #%d JSON from gh: %w", opts.issue, err)
+	}
+	issue.State = strings.ToUpper(strings.TrimSpace(issue.State))
+	if issue.State != "OPEN" && !opts.allowClosedIssue {
+		return nil, "", fmt.Errorf("issue #%d is %s; refusing to run AutoFlow step on a closed/non-open issue (use --allow-closed-issue only for an intentional local replay)", opts.issue, issue.State)
+	}
+	return &issue, "", nil
+}
+
+func inferGitHubRepo(ctx context.Context, target string) (string, string) {
+	out, err := exec.CommandContext(ctx, "git", "-C", target, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "", "target repository has no origin remote; pass --repo"
+	}
+	repo, ok := parseGitHubRepo(strings.TrimSpace(string(out)))
+	if !ok {
+		return "", "target repository origin is not a GitHub remote; pass --repo"
+	}
+	return repo, ""
+}
+
+func parseGitHubRepo(remote string) (string, bool) {
+	var path string
+	switch {
+	case strings.HasPrefix(remote, "git@github.com:"):
+		path = strings.TrimPrefix(remote, "git@github.com:")
+	case strings.HasPrefix(remote, "ssh://git@github.com/"):
+		path = strings.TrimPrefix(remote, "ssh://git@github.com/")
+	case strings.HasPrefix(remote, "https://github.com/"):
+		path = strings.TrimPrefix(remote, "https://github.com/")
+	case strings.HasPrefix(remote, "http://github.com/"):
+		path = strings.TrimPrefix(remote, "http://github.com/")
+	default:
+		return "", false
+	}
+	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", false
+	}
+	return parts[0] + "/" + parts[1], true
+}
+
+func (issue githubIssue) taskPrompt(number int) string {
+	labels := make([]string, 0, len(issue.Labels))
+	for _, label := range issue.Labels {
+		if strings.TrimSpace(label.Name) != "" {
+			labels = append(labels, label.Name)
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# GitHub Issue #%d: %s\n\n", number, strings.TrimSpace(issue.Title))
+	fmt.Fprintf(&b, "State: %s\n", issue.State)
+	if len(labels) > 0 {
+		fmt.Fprintf(&b, "Labels: %s\n", strings.Join(labels, ", "))
+	}
+	fmt.Fprintf(&b, "\n## Body\n%s\n", strings.TrimSpace(issue.Body))
+	return b.String()
+}
+
+func hasLocalTaskPromptSource(cmd *cobra.Command, opts *autoflowStepOptions) bool {
+	if opts.prompt != "" || opts.promptFile != "" {
+		return true
+	}
+	in := cmd.InOrStdin()
+	if file, ok := in.(*os.File); ok {
+		info, err := file.Stat()
+		return err == nil && info.Mode()&os.ModeCharDevice == 0
+	}
+	return in != nil
+}
+
+func readTaskPrompt(cmd *cobra.Command, opts *autoflowStepOptions, required bool, issue *githubIssue, issueUnavailable string) (string, error) {
 	if opts.promptFile != "" {
 		data, err := os.ReadFile(opts.promptFile)
 		if err != nil {
@@ -574,15 +701,18 @@ func readTaskPrompt(cmd *cobra.Command, opts *autoflowStepOptions, required bool
 	if opts.prompt != "" {
 		return opts.prompt, nil
 	}
-	if !required {
-		return "", nil
-	}
 
 	in := cmd.InOrStdin()
 	if file, ok := in.(*os.File); ok {
 		info, err := file.Stat()
 		if err == nil && info.Mode()&os.ModeCharDevice != 0 {
-			return "", fmt.Errorf("provide --prompt, --prompt-file, or piped stdin")
+			if issue != nil {
+				return issue.taskPrompt(opts.issue), nil
+			}
+			if !required {
+				return "", nil
+			}
+			return "", missingTaskPromptError(opts.issue, issueUnavailable)
 		}
 	}
 	data, err := io.ReadAll(in)
@@ -591,9 +721,22 @@ func readTaskPrompt(cmd *cobra.Command, opts *autoflowStepOptions, required bool
 	}
 	prompt := string(data)
 	if strings.TrimSpace(prompt) == "" {
-		return "", fmt.Errorf("provide --prompt, --prompt-file, or piped stdin")
+		if issue != nil {
+			return issue.taskPrompt(opts.issue), nil
+		}
+		if !required {
+			return "", nil
+		}
+		return "", missingTaskPromptError(opts.issue, issueUnavailable)
 	}
 	return prompt, nil
+}
+
+func missingTaskPromptError(issue int, issueUnavailable string) error {
+	if issueUnavailable != "" {
+		return fmt.Errorf("provide --prompt, --prompt-file, piped stdin, or make GitHub issue #%d available through gh (%s)", issue, issueUnavailable)
+	}
+	return fmt.Errorf("provide --prompt, --prompt-file, piped stdin, or a readable GitHub issue")
 }
 
 func missingPaths(paths []string) []string {
@@ -678,29 +821,6 @@ func isShellSafeArgRune(r rune) bool {
 	default:
 		return false
 	}
-}
-
-func verifyIssueOpen(ctx context.Context, target string, issue int, allowClosed bool) error {
-	if allowClosed {
-		return nil
-	}
-	if _, err := exec.LookPath("gh"); err != nil {
-		return nil
-	}
-	if err := exec.CommandContext(ctx, "git", "-C", target, "remote", "get-url", "origin").Run(); err != nil {
-		return nil
-	}
-	check := exec.CommandContext(ctx, "gh", "issue", "view", fmt.Sprintf("%d", issue), "--json", "state", "-q", ".state")
-	check.Dir = target
-	out, err := check.Output()
-	if err != nil {
-		return fmt.Errorf("could not verify GitHub issue #%d state with gh: %w", issue, err)
-	}
-	state := strings.TrimSpace(string(out))
-	if state != "OPEN" {
-		return fmt.Errorf("issue #%d is %s; refusing to run AutoFlow step on a closed/non-open issue (use --allow-closed-issue only for an intentional local replay)", issue, state)
-	}
-	return nil
 }
 
 func init() {

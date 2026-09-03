@@ -156,6 +156,20 @@ orca-autoflow autoflow step \
   --prompt-file .autoflow/issue-123-red-prompt.md
 ```
 
+When `--prompt`, `--prompt-file`, and piped stdin are omitted, `autoflow step`
+uses `gh issue view` to read the issue title/body/labels and includes them as
+the default task prompt. The GitHub repository is inferred from the target
+repository's `origin` remote; pass `--repo owner/name` when running against a
+target without a GitHub origin.
+
+```sh
+orca-autoflow autoflow step \
+  --target /path/to/project \
+  --issue 123 \
+  --phase red \
+  --print-prompt
+```
+
 The target project does not need `scripts/orca/codex-agent.sh` for the default
 path. Use `--runner /path/to/codex-agent.sh` only when intentionally replaying
 the older shell adapter. Use `--print-prompt` to inspect the prompt without
