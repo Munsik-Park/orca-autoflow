@@ -299,6 +299,59 @@ func TestAutoflowStepAllowClosedGitHubIssueForReplay(t *testing.T) {
 	assert.Contains(t, out, "closed body")
 }
 
+func TestAutoflowStepAllowClosedIssueWithLocalPromptDoesNotRequireGH(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(t *testing.T, target string, opts *autoflowStepOptions)
+		want      string
+	}{
+		{
+			name: "inline prompt",
+			configure: func(t *testing.T, target string, opts *autoflowStepOptions) {
+				opts.prompt = "local replay prompt"
+			},
+			want: "Task prompt:\nlocal replay prompt",
+		},
+		{
+			name: "prompt file",
+			configure: func(t *testing.T, target string, opts *autoflowStepOptions) {
+				promptFile := filepath.Join(target, ".autoflow", "issue-123-red-prompt.md")
+				require.NoError(t, os.WriteFile(promptFile, []byte("local replay file prompt\n"), 0o644))
+				opts.promptFile = promptFile
+			},
+			want: "Task prompt:\nlocal replay file prompt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(target, ".autoflow"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(target, ".autoflow", "issue-123-verification-design.md"), []byte("design\n"), 0o644))
+			require.NoError(t, runCommand(target, "git", "init", "-q"))
+			require.NoError(t, runCommand(target, "git", "remote", "add", "origin", "git@github.com:orca/example.git"))
+
+			fakebin := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(fakebin, "gh"), []byte("#!/bin/sh\nprintf 'offline\\n' >&2\nexit 1\n"), 0o755))
+			t.Setenv("PATH", fakebin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			cmd := newAutoflowStepCmd()
+			var opts autoflowStepOptions
+			opts.target = target
+			opts.issue = 123
+			opts.phase = "red"
+			opts.adapter = "codex"
+			opts.printPrompt = true
+			opts.allowClosedIssue = true
+			tt.configure(t, target, &opts)
+
+			out, err := runAutoflowStepCapture(cmd, &opts)
+			require.NoError(t, err)
+			assert.Contains(t, out, tt.want)
+		})
+	}
+}
+
 func TestAutoflowStepGitHubIssueIntakeReportsGHFailures(t *testing.T) {
 	tests := []struct {
 		name       string

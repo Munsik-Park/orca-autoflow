@@ -154,9 +154,14 @@ func runAutoflowStep(cmd *cobra.Command, opts *autoflowStepOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	issue, issueUnavailable, err := loadGitHubIssue(ctx, target, opts)
-	if err != nil {
-		return err
+	var issue *githubIssue
+	var issueUnavailable string
+	if !(opts.allowClosedIssue && hasLocalTaskPromptSource(cmd, opts)) {
+		var err error
+		issue, issueUnavailable, err = loadGitHubIssue(ctx, target, opts)
+		if err != nil {
+			return err
+		}
 	}
 	spec, err := autoflow.LookupPhase(opts.phase)
 	if err != nil {
@@ -667,6 +672,18 @@ func (issue githubIssue) taskPrompt(number int) string {
 	}
 	fmt.Fprintf(&b, "\n## Body\n%s\n", strings.TrimSpace(issue.Body))
 	return b.String()
+}
+
+func hasLocalTaskPromptSource(cmd *cobra.Command, opts *autoflowStepOptions) bool {
+	if opts.prompt != "" || opts.promptFile != "" {
+		return true
+	}
+	in := cmd.InOrStdin()
+	if file, ok := in.(*os.File); ok {
+		info, err := file.Stat()
+		return err == nil && info.Mode()&os.ModeCharDevice == 0
+	}
+	return in != nil
 }
 
 func readTaskPrompt(cmd *cobra.Command, opts *autoflowStepOptions, required bool, issue *githubIssue, issueUnavailable string) (string, error) {

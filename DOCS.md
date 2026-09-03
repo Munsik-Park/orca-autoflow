@@ -112,6 +112,7 @@ Flags:
 |---|---:|---|
 | `--target` | `.` | Target repository root |
 | `--issue` | `0` | GitHub issue number; must be positive |
+| `--repo` | none | GitHub repository in `owner/name` form; omitted means infer from target `origin` |
 | `--phase` | none | AutoFlow phase |
 | `--adapter` | `codex` | Agent adapter; only `codex` is supported |
 | `--model` | none | Codex model identifier; omitted means Codex default |
@@ -127,11 +128,15 @@ Flags:
 | `--allow-closed-issue` | `false` | Allow local replay against a closed GitHub issue |
 | `--dry-run` | `false` | Validate and print command boundary without running Codex |
 
-Exactly one prompt source should be used: `--prompt`, `--prompt-file`, or piped
-stdin. `--prompt` and `--prompt-file` cannot be used together.
+Prompt sources are checked in this order: `--prompt-file`, `--prompt`, piped
+stdin, then GitHub issue intake through `gh issue view`. `--prompt` and
+`--prompt-file` cannot be used together. GitHub issue intake reads the issue
+title, body, state, and labels; when `--repo` is omitted, the repository is
+inferred from the target repository's GitHub `origin` remote.
 
-When `gh` and a GitHub remote are available, `autoflow step` refuses to run
-against a closed issue unless `--allow-closed-issue` is set.
+By default, `autoflow step` refuses to run against a closed issue. Use
+`--allow-closed-issue` only for intentional local replay; when a local prompt
+source is provided in that replay mode, `gh` is not required.
 
 ## Phase Artifacts
 
