@@ -156,7 +156,7 @@ func runAutoflowStep(cmd *cobra.Command, opts *autoflowStepOptions) error {
 	}
 	var issue *githubIssue
 	var issueUnavailable string
-	if !(opts.allowClosedIssue && hasLocalTaskPromptSource(cmd, opts)) {
+	if !opts.allowClosedIssue || !hasLocalTaskPromptSource(cmd, opts) {
 		var err error
 		issue, issueUnavailable, err = loadGitHubIssue(ctx, target, opts)
 		if err != nil {
