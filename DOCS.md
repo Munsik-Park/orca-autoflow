@@ -62,7 +62,7 @@ Flags:
 |---|---:|---|
 | `--target` | `.` | Target repository root |
 | `--issue` | `0` | GitHub issue number; must be positive |
-| `--gitignore` | `false` | Add `.autoflow/issue-*-orca.json` to the target `.gitignore` |
+| `--gitignore` | `false` | Add `.autoflow/issue-*-orca.json` and `.autoflow/logs/` to the target `.gitignore` |
 | `--dry-run` | `false` | Print planned files without writing them |
 
 Use `--gitignore` when you want Orca's local state files ignored by the target
@@ -99,6 +99,12 @@ artifact exists and writes state to:
 ```text
 .autoflow/issue-123-orca.json
 ```
+
+Every real adapter run writes execution metadata plus redacted stdout/stderr log
+files under `.autoflow/logs/issue-123/<phase>-<timestamp>/`. The state JSON keeps
+only the latest metadata path in `last_run_metadata`; large logs stay in separate
+files. Failed adapter runs still record status, exit code when available, and log
+paths.
 
 Flags:
 

@@ -133,9 +133,9 @@ The command creates:
 - `.autoflow/issue-123-gate-quality-prompt.md`
 
 Existing files are preserved. Use `--dry-run` to preview the paths without
-writing files. Use `--gitignore` to add `.autoflow/issue-*-orca.json` to the
-target repository's `.gitignore`; otherwise the command prints that pattern as
-an advisory note.
+writing files. Use `--gitignore` to add `.autoflow/issue-*-orca.json` and
+`.autoflow/logs/` to the target repository's `.gitignore`; otherwise the
+command prints those patterns as an advisory note.
 
 ### AutoFlow Step
 
@@ -144,6 +144,8 @@ phase's required `.autoflow/` input artifacts, composes the AutoFlow role
 contract inside the `orca-autoflow` binary, invokes `codex exec`, validates
 required output artifacts, then writes Orca-owned state to
 `.autoflow/issue-<N>-orca.json`.
+Each real adapter run also writes metadata and redacted stdout/stderr logs
+under `.autoflow/logs/issue-<N>/`.
 
 ```sh
 orca-autoflow autoflow step \
