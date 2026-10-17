@@ -14,8 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Munsik-Park/orca-autoflow/internal/autoflow"
 	"github.com/spf13/cobra"
+
+	"github.com/Munsik-Park/orca-autoflow/internal/autoflow"
 )
 
 var autoflowCmd = &cobra.Command{
